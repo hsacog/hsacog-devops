@@ -1,0 +1,68 @@
+pipeline {
+    agent {
+        kubernetes {
+yaml '''
+apiVersion: v1
+kind: Pod
+spec:
+  containers:
+  - name: gradle
+    image: gradle:8.12.1-jdk21
+    command: ['sleep']
+    args: ['infinity']
+  - name: kaniko
+    image: gcr.io/kaniko-project/executor:debug
+    command: ['sleep']
+    args: ['infinity']
+    volumeMounts:
+      - name: registry-credentials
+        mountPath: /kaniko/.docker
+  volumes:
+    - name: registry-credentials
+      secret:
+        secretName: regcred
+        items: 
+        - key: .dockerconfigjson
+          path: config.json
+'''
+        }
+    }
+    environment {
+        DOCKER_USERNAME="hsacog"
+        IMAGE_NAME="blog"
+        IMAGE_TAG="${env.BUILD_NUMBER}"
+    }
+    stages {
+        stage('Checkout') {
+            steps {
+                container('gradle') {
+                    script {
+                        git branch: 'main', credentialsId: 'github-token', url: 'https://github.com/hsacog/blog'
+                    }
+                }
+            }
+        }
+        stage("Build") {
+            steps {
+                container("gradle") {
+                    script {
+                        sh "gradle --version"
+                        sh "gradle clean build"
+                    }
+                }
+            }
+        }
+        stage("Build Image using Kaniko") {
+            steps {
+                container("kaniko") {
+                    script {
+                        sh "executor --dockerfile=Dockerfile \
+                        --context=dir://${env.WORKSPACE} \
+                        --destination=${DOCKER_USERNAME}/${IMAGE_NAME}:latest \
+                        --destination=${DOCKER_USERNAME}/${IMAGE_NAME}:${IMAGE_TAG}"
+                    }
+                }
+            }
+        }
+    }
+}
